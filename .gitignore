@@ -150,3 +150,6 @@ backend/dist/
 
 # Locked workspaces config (local only)
 locked-workspaces.json
+/.idea/dctap-dancer.iml
+/.idea/modules.xml
+/.idea/vcs.xml

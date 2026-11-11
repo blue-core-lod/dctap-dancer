@@ -9,6 +9,7 @@ import type {
   ApiResponse,
   ValidationResult
 } from '@/types';
+import { addBluecoreAuth } from '@/bluecore'; // BLUECORE
 
 /**
  * Detect the base path from the current URL.
@@ -30,6 +31,7 @@ const api = axios.create({
     'Content-Type': 'application/json'
   }
 });
+addBluecoreAuth(api); // BLUECORE: send the Keycloak token with API requests (see src/bluecore)
 
 // Error handler
 function handleError(error: AxiosError<ApiResponse>): never {

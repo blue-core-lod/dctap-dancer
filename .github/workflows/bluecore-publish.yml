@@ -1,0 +1,72 @@
+name: Build and Release Docker Image
+
+# BLUECORE:
+# Publishes ghcr.io/blue-core-lod/dctap-dancer for the Bluecore stack, where it
+# is served under Marva at /marva/dancer/.
+#
+# Publishing is MANUAL ONLY: pushes and merges never publish. Either
+#   - Actions > "Build and Release Docker Image" > Run workflow, from
+#     bluecore-dev-mvp: pushes :latest
+#   - publish a GitHub Release targeting bluecore-dev-mvp: pushes :latest and
+#     :<release tag>
+# Runs from any other branch (e.g. main, which mirrors upstream) are refused.
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+env:
+  IMAGE: ghcr.io/blue-core-lod/dctap-dancer
+  # Absolute asset base so deep links (e.g. /marva/dancer/workspace/<id>) load
+  # their scripts after a reload or a Keycloak login redirect.
+  VITE_BASE_PATH: /marva/dancer/
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # A release's ref is its tag, so check the branch it targets instead
+      - name: Refuse to publish from anything but bluecore-dev-mvp
+        env:
+          SOURCE_BRANCH: ${{ github.event_name == 'release' && github.event.release.target_commitish || github.ref_name }}
+        run: |
+          if [ "$SOURCE_BRANCH" != "bluecore-dev-mvp" ]; then
+            echo "::error::Publish from bluecore-dev-mvp, not '$SOURCE_BRANCH'."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run backend tests
+        run: npm test --workspace=backend
+
+  build_and_publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push dctap-dancer
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          docker build --build-arg VITE_BASE_PATH="$VITE_BASE_PATH" -t "$IMAGE:latest" .
+          docker push "$IMAGE:latest"
+          if [ -n "$RELEASE_TAG" ]; then
+            docker tag "$IMAGE:latest" "$IMAGE:$RELEASE_TAG"
+            docker push "$IMAGE:$RELEASE_TAG"
+          fi

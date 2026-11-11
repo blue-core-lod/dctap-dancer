@@ -1,10 +1,11 @@
 name: Tests
 
+# BLUECORE: also test the Blue Core branch (bluecore-dev-mvp) and PRs into it
 on:
   push:
-    branches: [main]
+    branches: [main, bluecore-dev-mvp]
   pull_request:
-    branches: [main]
+    branches: [main, bluecore-dev-mvp]
 
 jobs:
   test:
