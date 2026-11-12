@@ -37,8 +37,8 @@ import { StartingPointFile } from '../types/starting-point.js';
  *                                      one; update Marva's dancerDefaultWorkspace too
  *
  * Seeding is a one-time copy: later changes to the sources (e.g. LC updating
- * marva-profiles) never reach an existing workspace. Bring them in by importing
- * the new file as a separate workspace and copying shapes across.
+ * marva-profiles) never reach an existing workspace. For a workspace that
+ * follows LC's updates, see sync.ts ("LC Latest").
  */
 export interface SeedConfig {
   workspaceName: string;
@@ -74,13 +74,39 @@ export function loadSeedConfig(env: NodeJS.ProcessEnv = process.env): SeedConfig
 /** Read JSON from an http(s) URL or a local file path */
 export async function loadJson(source: string): Promise<unknown> {
   if (/^https?:\/\//i.test(source)) {
-    const response = await fetch(source);
+    const response = await fetch(source, { signal: AbortSignal.timeout(60_000) });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} fetching ${source}`);
     }
     return response.json();
   }
   return JSON.parse(await readFile(source, 'utf-8'));
+}
+
+export interface MarvaSources {
+  profiles: MarvaProfileDocument[];
+  startingPoints?: StartingPointFile;
+}
+
+/** Load and check a Marva profiles array and (optional) starting points file */
+export async function loadMarvaSources(
+  config: { profilesSource: string; startingPointsSource?: string },
+  load: (source: string) => Promise<unknown> = loadJson
+): Promise<MarvaSources> {
+  const profiles = await load(config.profilesSource);
+  if (!Array.isArray(profiles) || profiles.length === 0 || !profiles.every(p => p?.json?.Profile)) {
+    throw new Error(`${config.profilesSource} is not a Marva profiles array`);
+  }
+  const startingPoints = config.startingPointsSource
+    ? await load(config.startingPointsSource)
+    : undefined;
+  if (startingPoints !== undefined && (!Array.isArray(startingPoints) || startingPoints.length === 0)) {
+    throw new Error(`${config.startingPointsSource} is not a starting points file`);
+  }
+  return {
+    profiles: profiles as MarvaProfileDocument[],
+    startingPoints: startingPoints as StartingPointFile | undefined
+  };
 }
 
 const defaultDeps: SeedDeps = {
@@ -101,20 +127,11 @@ export async function seedWorkspace(config: SeedConfig | null, deps: SeedDeps = 
   }
 
   // Load everything before creating the workspace so a bad source leaves no half-seeded workspace
-  const profiles = await deps.load(config.profilesSource);
-  if (!Array.isArray(profiles) || profiles.length === 0 || !profiles.every(p => p?.json?.Profile)) {
-    throw new Error(`${config.profilesSource} is not a Marva profiles array`);
-  }
-  const startingPoints = config.startingPointsSource
-    ? await deps.load(config.startingPointsSource)
-    : undefined;
-  if (startingPoints !== undefined && (!Array.isArray(startingPoints) || startingPoints.length === 0)) {
-    throw new Error(`${config.startingPointsSource} is not a starting points file`);
-  }
+  const { profiles, startingPoints } = await loadMarvaSources(config, deps.load);
 
-  const { workspaceId } = deps.importProfiles(workspaceName, profiles as MarvaProfileDocument[]);
+  const { workspaceId } = deps.importProfiles(workspaceName, profiles);
   if (startingPoints) {
-    deps.importStartingPoints(workspaceId, startingPoints as StartingPointFile);
+    deps.importStartingPoints(workspaceId, startingPoints);
   }
 
   return { status: 'seeded', workspaceName, workspaceId, startingPoints: Boolean(startingPoints) };

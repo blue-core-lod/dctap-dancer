@@ -15,8 +15,8 @@ Search for `BLUECORE` to find everything we changed.
 
 All of it lives in two folders:
 
-- `backend/src/bluecore/`: login check, the starting "Blue Core" workspace, and tests (`test/`)
-- `frontend/src/bluecore/`: Keycloak login and the "Signed in as…" bar
+- `backend/src/bluecore/`: login check, the starting "Blue Core" workspace, the "LC Latest" workspace, and tests (`test/`)
+- `frontend/src/bluecore/`: Keycloak login and the top bar ("LC Latest" status, "Signed in as…")
 
 ## LC files we touched
 
@@ -40,6 +40,16 @@ Set these when the container starts, not when building the image
 | `SEED_PROFILES_SOURCE` / `SEED_STARTING_POINTS_SOURCE` | Where to get its profiles (URL or file) |
 
 The starting workspace is only created if it doesn't exist yet. Edits are never overwritten.
+
+## LC Latest
+
+A read-only workspace that always matches LC's newest Marva profiles. It's
+always on, and its settings are in `backend/src/bluecore/sync.ts`.
+
+- Checked at startup and every hour; re-imported only when LC's files changed
+- Its "Modified" date on the home page is LC's last commit to the files, not the import time
+- The top bar shows when it last matched LC, or a yellow warning if LC's GitHub couldn't be reached (the current copy is kept, and the next check tries again)
+- Locked, so nobody's edits get wiped by the next update. Duplicate it to edit.
 
 ## Tests
 

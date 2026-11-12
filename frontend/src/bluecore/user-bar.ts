@@ -1,16 +1,22 @@
-// BLUECORE: "Signed in as <user> · Log out" strip, added outside the Vue app so
+// BLUECORE: the Blue Core bar ("LC Latest" status, "Signed in as <user> · Log out"), added outside the Vue app.
 import { getUsername, logout } from './auth';
+import { showLcLatestStatus } from './lc-latest-status';
 
 const BAR_HEIGHT = '28px';
 
 const STYLE = `
 :root { --bluecore-bar-height: ${BAR_HEIGHT}; }
 .bluecore-user-bar {
-  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  display: flex; align-items: center; gap: 8px;
   height: var(--bluecore-bar-height); padding: 0 12px; box-sizing: border-box;
   background: #2c3e50; color: #e0e6ec; font-size: 12px;
 }
 .bluecore-user-bar strong { color: #fff; }
+.bluecore-lc-latest {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #b8c4d0; cursor: default;
+}
+.bluecore-lc-latest.bluecore-warning { color: #ffd479; }
 .bluecore-user-bar button {
   font-size: 12px; padding: 1px 8px; cursor: pointer;
   background: transparent; color: #fff; border: 1px solid #8a9bab; border-radius: 3px;
@@ -48,6 +54,11 @@ export function mountUserBar(): void {
     logout();
   });
 
-  bar.append(label, button);
+  // "LC Latest" sync status on the left, the user on the right
+  const lcLatest = document.createElement('span');
+  lcLatest.className = 'bluecore-lc-latest';
+  showLcLatestStatus(lcLatest);
+
+  bar.append(lcLatest, label, button);
   document.body.prepend(bar);
 }
