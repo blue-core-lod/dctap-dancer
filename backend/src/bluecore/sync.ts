@@ -18,41 +18,47 @@ import { loadJson, loadMarvaSources } from './seed.js';
  *
  * How it works
  * ------------
- * - Checks LC's files at startup and then every hour (LC_LATEST below).
- * - Only re-imports when the sources changed since the last sync (or the
- *   workspace is missing). The import builds a new workspace, then replaces the
- *   old one, so nobody ever sees a half-imported workspace.
+ * - Checks at startup, then hourly at 15 minutes past (LC's updates are
+ *   committed on the hour).
+ * - Each check first asks GitHub when LC last changed the files (a tiny
+ *   request). If that matches our copy, nothing is downloaded. Otherwise (or
+ *   if GitHub's API doesn't answer) it downloads the files and re-imports
+ *   only if they really changed (or the workspace is missing).
+ * - The import builds a new workspace, then replaces the old one, so nobody
+ *   ever sees a half-imported workspace.
  * - The workspace is locked (read-only, see data/locked-workspaces.json): it
  *   can't be edited, renamed or deleted, because every sync would replace those
  *   edits. Duplicate it to get an editable copy; copies are never touched.
  * - A re-import gives the workspace a new ID. Blue Core Marva remembers the
  *   selected workspace by name too, so users stay on it.
- * - "Modified" on the editor's home page shows when LC last changed the files
- *   (their last commit on GitHub), not when the dancer imported them.
+ * - The editor's home page shows "Library of Congress Profiles last updated
+ *   on: <date>" (the files' last commit on GitHub) on the workspace's card,
+ *   instead of when the dancer created and imported it. The name links to
+ *   LC's profiles on GitHub.
  * - If LC's files can't be loaded (GitHub down, network blocked, a bad
- *   file), the current workspace is kept as is and the next hourly check
- *   tries again. The failure is recorded, and the dancer's Blue Core bar
- *   shows it (GET /api/bluecore/lc-latest).
+ *   file), the current workspace is kept as is, the error is logged, and the
+ *   next check tries again.
  */
 export interface SyncConfig {
   workspaceName: string;
   profilesSource: string;
   startingPointsSource?: string;
-  intervalMinutes: number;
+  checkAtMinute: number; // check hourly at this many minutes past the hour
   // GitHub API URLs listing the sources' commits, to find when they last changed
   commitHistory?: string[];
+  // Shown on the workspace's card: "<sourceName> last updated on: <date>",
+  // with sourceName linking to sourceUrl
+  sourceName?: string;
+  sourceUrl?: string;
 }
 
-/** What the last checks did, saved in data/bluecore-sync-state.json */
+/** The last import, saved in data/bluecore-sync-state.json */
 export interface SyncState {
   workspaceName: string;
-  workspaceId?: string;   // set once imported
-  hash?: string;          // fingerprint of LC's files at the last import
-  syncedAt?: string;      // last import (LC's files had changed)
-  sourceUpdatedAt?: string; // when LC last changed the files (last commit)
-  checkedAt?: string;     // last check, whether or not it reached LC
-  lastSuccessAt?: string; // last check that reached LC
-  lastError?: string;     // why the last check failed (cleared on success)
+  workspaceId?: string;     // set once imported
+  hash?: string;            // fingerprint of LC's files at the last import
+  syncedAt?: string;        // when the dancer last imported them
+  sourceUpdatedAt?: string; // when LC last changed them (last commit)
 }
 
 export interface SyncDeps {
@@ -69,6 +75,9 @@ export interface SyncDeps {
   now: () => Date;
 }
 
+// Raw file URLs: GitHub serves files here, never folders, so the folder URL on
+// its own is a 404. LC_PROFILES_PAGE is the folder to browse.
+const LC_PROFILES_PAGE = 'https://github.com/lcnetdev/marva-profiles/tree/main/marva-prod';
 const LC_PROFILES = 'https://raw.githubusercontent.com/lcnetdev/marva-profiles/refs/heads/main/marva-prod';
 const LC_COMMITS = 'https://api.github.com/repos/lcnetdev/marva-profiles/commits?sha=main&per_page=1&path=marva-prod';
 
@@ -76,13 +85,25 @@ export const LC_LATEST: SyncConfig = {
   workspaceName: 'LC Latest',
   profilesSource: `${LC_PROFILES}/marva-profiles.json`,
   startingPointsSource: `${LC_PROFILES}/marva-starting.json`,
-  intervalMinutes: 60,
-  commitHistory: [`${LC_COMMITS}/marva-profiles.json`, `${LC_COMMITS}/marva-starting.json`]
+  checkAtMinute: 15,
+  commitHistory: [`${LC_COMMITS}/marva-profiles.json`, `${LC_COMMITS}/marva-starting.json`],
+  sourceName: 'Library of Congress Profiles',
+  sourceUrl: LC_PROFILES_PAGE
 };
 
 export type SyncResult =
   | { status: 'unchanged'; workspaceName: string; workspaceId: string }
   | { status: 'synced'; workspaceName: string; workspaceId: string; replaced: number };
+
+/** Milliseconds from `now` until the next time it's `minute` minutes past the hour */
+export function msUntilNextCheck(minute: number, now: Date): number {
+  const next = new Date(now);
+  next.setUTCMinutes(minute, 0, 0);
+  if (next.getTime() <= now.getTime()) {
+    next.setUTCHours(next.getUTCHours() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
 
 /** Name of the workspace while it is being imported, before it replaces the old one */
 export function importingName(workspaceName: string): string {
@@ -93,39 +114,28 @@ export async function syncWorkspace(config: SyncConfig, deps: SyncDeps = default
   const { workspaceName } = config;
   const saved = deps.readState();
   const state: SyncState = saved?.workspaceName === workspaceName ? saved : { workspaceName };
-  const checkedAt = deps.now().toISOString();
-
-  try {
-    return await checkAndImport(config, deps, state, checkedAt);
-  } catch (error) {
-    // Keep the current workspace; record why so the editor can show it
-    deps.writeState({ ...state, checkedAt, lastError: error instanceof Error ? error.message : String(error) });
-    throw error;
-  }
-}
-
-async function checkAndImport(
-  config: SyncConfig,
-  deps: SyncDeps,
-  state: SyncState,
-  checkedAt: string
-): Promise<SyncResult> {
-  const { workspaceName } = config;
   deps.lock(workspaceName);
+  const ourCopy = () => {
+    const named = deps.listWorkspaces().filter(ws => ws.name === workspaceName);
+    return named.length === 1 && state.hash && state.workspaceId === named[0].id ? named[0] : null;
+  };
+
+  // When LC last changed the files. If our copy is from then, skip the download.
+  const sourceUpdatedAt = await findSourceUpdatedAt(config, deps);
+  const copy = ourCopy();
+  if (copy && sourceUpdatedAt && sourceUpdatedAt === state.sourceUpdatedAt) {
+    return { status: 'unchanged', workspaceName, workspaceId: copy.id };
+  }
 
   const sources = await loadMarvaSources(config, deps.load);
   const hash = createHash('sha256').update(JSON.stringify(sources)).digest('hex');
 
   const current = deps.listWorkspaces().filter(ws => ws.name === workspaceName);
-  const unchanged = current.length === 1 && state.hash === hash && state.workspaceId === current[0].id;
-
-  // Look the date up again only when the files changed (or it's still unknown)
-  const sourceUpdatedAt = unchanged && state.sourceUpdatedAt
-    ? state.sourceUpdatedAt
-    : await findSourceUpdatedAt(config, deps);
-
-  if (unchanged) {
-    deps.writeState({ ...state, sourceUpdatedAt, checkedAt, lastSuccessAt: checkedAt, lastError: undefined });
+  if (ourCopy() && state.hash === hash) {
+    // Same files: just remember the date (kept as is if GitHub's API failed)
+    if (sourceUpdatedAt && sourceUpdatedAt !== state.sourceUpdatedAt) {
+      deps.writeState({ ...state, sourceUpdatedAt });
+    }
     return { status: 'unchanged', workspaceName, workspaceId: current[0].id };
   }
 
@@ -150,7 +160,7 @@ async function checkAndImport(
 
   current.forEach(ws => deps.deleteWorkspace(ws.id));
   deps.renameWorkspace(workspaceId, workspaceName);
-  deps.writeState({ workspaceName, workspaceId, hash, syncedAt: checkedAt, sourceUpdatedAt, checkedAt, lastSuccessAt: checkedAt });
+  deps.writeState({ workspaceName, workspaceId, hash, syncedAt: deps.now().toISOString(), sourceUpdatedAt });
 
   return { status: 'synced', workspaceName, workspaceId, replaced: current.length };
 }
@@ -158,7 +168,7 @@ async function checkAndImport(
 /**
  * When the sources last changed, from their commit history. Undefined when
  * unknown (no history configured, or GitHub's API failed or hit its rate
- * limit); the editor then shows the import date, and the next check retries.
+ * limit); the check then downloads the files to compare them instead.
  */
 async function findSourceUpdatedAt(config: SyncConfig, deps: SyncDeps): Promise<string | undefined> {
   if (!config.commitHistory?.length) {
@@ -193,35 +203,30 @@ export async function fetchLastCommitDate(urls: string[]): Promise<string | null
 }
 
 /**
- * For the editor's workspace list: show the synced workspace's "Modified" as
- * when the source last changed, instead of when the dancer imported it.
+ * For the editor's workspace list: add the source's name and when it last
+ * changed (in seconds, like updatedAt) to the synced workspace, for its card.
+ * Left out while the date is unknown, so the card shows Created/Modified.
  */
-export function withSourceUpdatedAt<T extends { name: string; updatedAt: number }>(
+export function withSourceInfo<T extends { name: string }>(
   workspaces: T[],
-  workspaceName: string,
+  config: SyncConfig,
   sourceUpdatedAt: string | null
-): T[] {
+): Array<T & { sourceName?: string; sourceUrl?: string; sourceUpdatedAt?: number }> {
   const time = sourceUpdatedAt ? Math.floor(Date.parse(sourceUpdatedAt) / 1000) : NaN;
-  if (Number.isNaN(time)) {
+  if (!config.sourceName || Number.isNaN(time)) {
     return workspaces;
   }
-  return workspaces.map(ws => (ws.name === workspaceName ? { ...ws, updatedAt: time } : ws));
+  return workspaces.map(ws => (
+    ws.name === config.workspaceName
+      ? { ...ws, sourceName: config.sourceName, sourceUrl: config.sourceUrl, sourceUpdatedAt: time }
+      : ws
+  ));
 }
 
-/** For the editor: the saved state of the last checks, plus how often they run */
-export function syncStatus(config: SyncConfig, deps: Pick<SyncDeps, 'readState' | 'listWorkspaces'> = defaultDeps) {
-  const saved = deps.readState();
-  const state = saved?.workspaceName === config.workspaceName ? saved : null;
-  return {
-    workspaceName: config.workspaceName,
-    available: deps.listWorkspaces().some(ws => ws.name === config.workspaceName),
-    intervalMinutes: config.intervalMinutes,
-    syncedAt: state?.syncedAt ?? null,
-    sourceUpdatedAt: state?.sourceUpdatedAt ?? null,
-    checkedAt: state?.checkedAt ?? null,
-    lastSuccessAt: state?.lastSuccessAt ?? state?.syncedAt ?? null,
-    lastError: state?.lastError ?? null
-  };
+/** When the synced workspace's source last changed, as last looked up */
+export function readSourceUpdatedAt(config: SyncConfig, deps: Pick<SyncDeps, 'readState'> = defaultDeps): string | null {
+  const state = deps.readState();
+  return (state?.workspaceName === config.workspaceName && state.sourceUpdatedAt) || null;
 }
 
 const DATA_DIR = join(process.cwd(), 'data');

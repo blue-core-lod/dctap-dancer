@@ -22,7 +22,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 addBluecoreAuth(app); // BLUECORE: require a Keycloak login on /api (see src/bluecore)
-addLcLatestRoutes(app); // BLUECORE: "LC Latest" sync status and dates (see src/bluecore)
+addLcLatestRoutes(app); // BLUECORE: "LC Latest" card date (see src/bluecore)
 
 // API Routes
 app.use('/api/workspaces', workspacesRouter);

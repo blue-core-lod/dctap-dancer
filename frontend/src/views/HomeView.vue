@@ -66,10 +66,17 @@
             </h3>
             <p class="workspace-meta">
               <span v-if="workspace.isLocked" class="locked-badge">Read-only</span>
+
+              <!-- ### BLUECORE START ### -->
+              <template v-if="workspace.sourceName && workspace.sourceUpdatedAt"><a v-if="workspace.sourceUrl" :href="workspace.sourceUrl" target="_blank" rel="noopener noreferrer">{{ workspace.sourceName }}</a><template v-else>{{ workspace.sourceName }}</template> last updated on: {{ formatDate(workspace.sourceUpdatedAt) }}</template><!-- BLUECORE: synced "LC Latest" -->
+              <template v-else>
               Created: {{ formatDate(workspace.createdAt) }}
               <span v-if="workspace.updatedAt !== workspace.createdAt">
                 | Modified: {{ formatDate(workspace.updatedAt) }}
               </span>
+              </template>
+              <!-- ### BLUECORE END ### -->
+
             </p>
           </div>
           <div class="workspace-actions">

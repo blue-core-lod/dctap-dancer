@@ -2,7 +2,7 @@
 import { Express } from 'express';
 import { loadAuthConfig, createAuthMiddleware, publicAuthConfig } from './auth.js';
 import { loadSeedConfig, seedWorkspace } from './seed.js';
-import { LC_LATEST, syncStatus, syncWorkspace, withSourceUpdatedAt } from './sync.js';
+import { LC_LATEST, msUntilNextCheck, readSourceUpdatedAt, syncWorkspace, withSourceInfo } from './sync.js';
 import { workspaceService } from '../services/database.js';
 
 const authConfig = loadAuthConfig();
@@ -28,25 +28,17 @@ export function addBluecoreAuth(app: Express): void {
 }
 
 /**
- * Add the "LC Latest" routes:
- *   - GET /api/bluecore/lc-latest: when it last synced with LC (shown in the
- *     Blue Core bar)
- *   - the workspace list shows its "Modified" as when LC last changed the
- *     files, not when the dancer imported them
+ * Give "LC Latest" in the workspace list the date LC last changed the files,
+ * for its card ("Library of Congress Profiles last updated on: …").
  *
- * Call after addBluecoreAuth() and before the API routes.
+ * Call before the API routes.
  */
 export function addLcLatestRoutes(app: Express): void {
-  app.get('/api/bluecore/lc-latest', (_req, res) => {
-    res.json({ success: true, data: syncStatus(LC_LATEST) });
-  });
-
   app.get('/api/workspaces', (_req, res, next) => {
     const json = res.json.bind(res);
     res.json = (body) => {
       if (body?.success && Array.isArray(body.data)) {
-        const { sourceUpdatedAt } = syncStatus(LC_LATEST);
-        body = { ...body, data: withSourceUpdatedAt(body.data, LC_LATEST.workspaceName, sourceUpdatedAt) };
+        body = { ...body, data: withSourceInfo(body.data, LC_LATEST, readSourceUpdatedAt(LC_LATEST)) };
       }
       return json(body);
     };
@@ -59,7 +51,7 @@ export function addLcLatestRoutes(app: Express): void {
  *   - "Blue Core" (SEED_*): created once from LC's profiles, then edited by
  *     staff. See seed.ts.
  *   - "LC Latest": read-only, kept in sync with LC's profiles at startup
- *     and every hour. See sync.ts.
+ *     and hourly (at 15 minutes past). See sync.ts.
  *
  * Call after the database is initialized and before the server listens, so
  * Marva never reads a half-imported workspace. Failures are logged but don't
@@ -102,7 +94,11 @@ export async function setupBluecoreWorkspaces(): Promise<void> {
   } else {
     await runSync();
   }
-  if (syncConfig.intervalMinutes > 0) {
-    setInterval(runSync, syncConfig.intervalMinutes * 60_000).unref();
-  }
+  const scheduleNextCheck = () => {
+    setTimeout(async () => {
+      await runSync();
+      scheduleNextCheck();
+    }, msUntilNextCheck(syncConfig.checkAtMinute, new Date())).unref();
+  };
+  scheduleNextCheck();
 }

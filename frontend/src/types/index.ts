@@ -6,6 +6,9 @@ export interface Workspace {
   createdAt: number;
   updatedAt: number;
   isLocked?: boolean;
+  sourceName?: string;      // BLUECORE: synced workspaces ("LC Latest"): where it comes from
+  sourceUrl?: string;       // BLUECORE: and a page showing that source
+  sourceUpdatedAt?: number; // BLUECORE: and when that source last changed (see backend/src/bluecore/sync.ts)
 }
 
 export interface Folder {

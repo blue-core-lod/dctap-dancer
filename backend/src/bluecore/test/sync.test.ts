@@ -11,7 +11,7 @@ vi.mock('../../services/marva-profile.js', () => ({ importMarvaProfiles: vi.fn()
 vi.mock('../../services/starting-point.js', () => ({ importStartingPoints: vi.fn() }));
 
 import {
-  LC_LATEST, fetchLastCommitDate, lockWorkspaceName, syncStatus, syncWorkspace, withSourceUpdatedAt, SyncDeps, SyncState
+  LC_LATEST, fetchLastCommitDate, lockWorkspaceName, msUntilNextCheck, readSourceUpdatedAt, syncWorkspace, withSourceInfo, SyncDeps, SyncState
 } from '../sync.js';
 
 const profiles = [{ id: 'p1', json: { Profile: { id: 'lc:RT:bf2:Monograph' } } }];
@@ -19,7 +19,7 @@ const newerProfiles = [{ id: 'p1', json: { Profile: { id: 'lc:RT:bf2:Monograph',
 const startingPoints = [{ id: 'sp', name: 'config', configType: 'startingPoints', json: [{ menuGroup: 'M', menuItems: [] }] }];
 
 const config = {
-  workspaceName: 'LC Latest', profilesSource: 'p.json', startingPointsSource: 's.json', intervalMinutes: 60,
+  workspaceName: 'LC Latest', profilesSource: 'p.json', startingPointsSource: 's.json', checkAtMinute: 15,
   commitHistory: ['commits/p.json', 'commits/s.json']
 };
 
@@ -29,6 +29,7 @@ function makeDeps(sources: Record<string, unknown>, initial: Array<{ id: string;
   let state: SyncState | null = null;
   let nextId = 1;
   const clock = { now: '2026-11-12T10:00:00.000Z' };
+  const commit = { date: '2026-10-01T12:00:00Z' }; // LC's last commit to the files
   const deps: SyncDeps = {
     load: vi.fn(async (source: string) => {
       if (!(source in sources)) throw new Error(`missing ${source}`);
@@ -46,20 +47,29 @@ function makeDeps(sources: Record<string, unknown>, initial: Array<{ id: string;
       workspaces = workspaces.map(ws => (ws.id === id ? { ...ws, name } : ws));
     }),
     lock: vi.fn(),
-    lastCommitDate: vi.fn(async () => '2026-10-01T12:00:00Z'),
+    lastCommitDate: vi.fn(async () => commit.date),
     readState: () => state,
     writeState: vi.fn((s: SyncState) => { state = s; }),
     now: () => new Date(clock.now)
   };
-  return { deps, names: () => workspaces.map(ws => ws.name), sources, state: () => state, clock };
+  return { deps, names: () => workspaces.map(ws => ws.name), sources, state: () => state, clock, commit };
 }
 
 describe('LC_LATEST', () => {
-  it('follows LC\'s marva-prod profiles hourly', () => {
+  it('follows LC\'s marva-prod profiles hourly, at 15 past', () => {
     expect(LC_LATEST.workspaceName).toBe('LC Latest');
     expect(LC_LATEST.profilesSource).toMatch(/lcnetdev\/marva-profiles\/.*\/marva-prod\/marva-profiles\.json$/);
     expect(LC_LATEST.startingPointsSource).toMatch(/marva-prod\/marva-starting\.json$/);
-    expect(LC_LATEST.intervalMinutes).toBe(60);
+    expect(LC_LATEST.checkAtMinute).toBe(15);
+  });
+});
+
+describe('msUntilNextCheck', () => {
+  it('waits until the next 15 minutes past the hour', () => {
+    expect(msUntilNextCheck(15, new Date('2026-11-12T10:00:00Z'))).toBe(15 * 60_000);
+    expect(msUntilNextCheck(15, new Date('2026-11-12T10:20:00Z'))).toBe(55 * 60_000);
+    expect(msUntilNextCheck(15, new Date('2026-11-12T10:15:00Z'))).toBe(60 * 60_000);
+    expect(msUntilNextCheck(15, new Date('2026-11-12T23:30:00Z'))).toBe(45 * 60_000);
   });
 });
 
@@ -84,12 +94,13 @@ describe('syncWorkspace', () => {
   });
 
   it('replaces the workspace when the sources change, keeping other workspaces', async () => {
-    const { deps, names, sources } = makeDeps(
+    const { deps, names, sources, commit } = makeDeps(
       { 'p.json': profiles, 's.json': startingPoints },
       [{ id: 'bc', name: 'Blue Core' }]
     );
     await syncWorkspace(config, deps);
     sources['p.json'] = newerProfiles;
+    commit.date = '2026-11-12T14:00:03Z';
     expect(await syncWorkspace(config, deps)).toEqual({
       status: 'synced', workspaceName: 'LC Latest', workspaceId: 'ws-2', replaced: 1
     });
@@ -106,9 +117,10 @@ describe('syncWorkspace', () => {
   });
 
   it('keeps the current workspace when a source fails to load', async () => {
-    const { deps, names, sources } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
+    const { deps, names, sources, commit } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
     await syncWorkspace(config, deps);
     sources['p.json'] = { not: 'profiles' };
+    commit.date = '2026-11-12T14:00:03Z';
     await expect(syncWorkspace(config, deps)).rejects.toThrow('not a Marva profiles array');
     expect(names()).toEqual(['LC Latest']);
   });
@@ -130,81 +142,75 @@ describe('syncWorkspace', () => {
   });
 });
 
-describe('sync status', () => {
-  it('records the import and each later check', async () => {
-    const { deps, state, clock } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
+describe('readSourceUpdatedAt', () => {
+  it('reads when LC last changed the files, once known', async () => {
+    const { deps } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
+    expect(readSourceUpdatedAt(config, deps)).toBeNull();
     await syncWorkspace(config, deps);
-    expect(state()).toMatchObject({
-      syncedAt: '2026-11-12T10:00:00.000Z', checkedAt: '2026-11-12T10:00:00.000Z', lastSuccessAt: '2026-11-12T10:00:00.000Z'
-    });
-
-    clock.now = '2026-11-12T11:00:00.000Z';
-    await syncWorkspace(config, deps);
-    expect(state()).toMatchObject({ syncedAt: '2026-11-12T10:00:00.000Z', checkedAt: '2026-11-12T11:00:00.000Z' });
-  });
-
-  it('records a failed check, keeps the last good one, and clears it on success', async () => {
-    const { deps, state, clock, sources } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
-    await syncWorkspace(config, deps);
-
-    clock.now = '2026-11-12T11:00:00.000Z';
-    vi.mocked(deps.load).mockRejectedValueOnce(new Error('fetch failed'));
-    await expect(syncWorkspace(config, deps)).rejects.toThrow('fetch failed');
-    expect(syncStatus(config, deps)).toEqual({
-      workspaceName: 'LC Latest', available: true, intervalMinutes: 60,
-      syncedAt: '2026-11-12T10:00:00.000Z', sourceUpdatedAt: '2026-10-01T12:00:00Z',
-      checkedAt: '2026-11-12T11:00:00.000Z', lastSuccessAt: '2026-11-12T10:00:00.000Z', lastError: 'fetch failed'
-    });
-
-    clock.now = '2026-11-12T12:00:00.000Z';
-    sources['p.json'] = profiles;
-    await syncWorkspace(config, deps);
-    expect(state()?.lastError).toBeUndefined();
-    expect(state()?.lastSuccessAt).toBe('2026-11-12T12:00:00.000Z');
-  });
-
-  it('records a failed first check, before the workspace exists', async () => {
-    const { deps } = makeDeps({});
-    await expect(syncWorkspace(config, deps)).rejects.toThrow('missing p.json');
-    expect(syncStatus(config, deps)).toMatchObject({
-      available: false, syncedAt: null, lastSuccessAt: null, lastError: 'missing p.json'
-    });
+    expect(readSourceUpdatedAt(config, deps)).toBe('2026-10-01T12:00:00Z');
   });
 });
 
 describe('when LC last changed the files', () => {
-  it('is looked up on import, and only again when the files change', async () => {
-    const { deps, state, sources } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
+  it('skips the download when LC\'s last commit is the one we have', async () => {
+    const { deps, state } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
     await syncWorkspace(config, deps);
     expect(deps.lastCommitDate).toHaveBeenCalledWith(['commits/p.json', 'commits/s.json']);
     expect(state()?.sourceUpdatedAt).toBe('2026-10-01T12:00:00Z');
+    expect(deps.load).toHaveBeenCalledTimes(2);
 
+    expect((await syncWorkspace(config, deps)).status).toBe('unchanged');
+    expect(deps.load).toHaveBeenCalledTimes(2);
+  });
+
+  it('downloads and re-imports after a new commit', async () => {
+    const { deps, state, sources, commit } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
     await syncWorkspace(config, deps);
-    expect(deps.lastCommitDate).toHaveBeenCalledTimes(1);
-
-    vi.mocked(deps.lastCommitDate).mockResolvedValueOnce('2026-11-12T14:00:03Z');
+    commit.date = '2026-11-12T14:00:03Z';
     sources['p.json'] = newerProfiles;
-    await syncWorkspace(config, deps);
+    expect((await syncWorkspace(config, deps)).status).toBe('synced');
     expect(state()?.sourceUpdatedAt).toBe('2026-11-12T14:00:03Z');
   });
 
-  it('is left unknown when GitHub\'s API fails, without failing the sync, and retried next time', async () => {
+  it('falls back to downloading and comparing when GitHub\'s API fails', async () => {
+    const { deps, state } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await syncWorkspace(config, deps);
+
+    vi.mocked(deps.lastCommitDate).mockRejectedValueOnce(new Error('HTTP 403 rate limited'));
+    expect((await syncWorkspace(config, deps)).status).toBe('unchanged');
+    expect(deps.load).toHaveBeenCalledTimes(4);
+    expect(state()?.sourceUpdatedAt).toBe('2026-10-01T12:00:00Z');
+  });
+
+  it('leaves the date unknown on a first import without GitHub\'s API, and fills it in later', async () => {
     const { deps, state } = makeDeps({ 'p.json': profiles, 's.json': startingPoints });
     vi.mocked(deps.lastCommitDate).mockRejectedValueOnce(new Error('HTTP 403 rate limited'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect((await syncWorkspace(config, deps)).status).toBe('synced');
     expect(state()?.sourceUpdatedAt).toBeUndefined();
 
-    await syncWorkspace(config, deps);
+    expect((await syncWorkspace(config, deps)).status).toBe('unchanged');
     expect(state()?.sourceUpdatedAt).toBe('2026-10-01T12:00:00Z');
+    expect(deps.importProfiles).toHaveBeenCalledTimes(1);
   });
 
-  it('replaces only the synced workspace\'s "Modified" in the workspace list', () => {
+  it('adds the source and its date to the synced workspace only, for its card', () => {
     const list = [{ name: 'LC Latest', updatedAt: 1 }, { name: 'Blue Core', updatedAt: 2 }];
-    expect(withSourceUpdatedAt(list, 'LC Latest', '2026-10-01T12:00:00Z')).toEqual([
-      { name: 'LC Latest', updatedAt: Date.parse('2026-10-01T12:00:00Z') / 1000 }, { name: 'Blue Core', updatedAt: 2 }
+    expect(withSourceInfo(list, LC_LATEST, '2026-10-01T12:00:00Z')).toEqual([
+      {
+        name: 'LC Latest', updatedAt: 1,
+        sourceName: 'Library of Congress Profiles',
+        sourceUrl: 'https://github.com/lcnetdev/marva-profiles/tree/main/marva-prod',
+        sourceUpdatedAt: Date.parse('2026-10-01T12:00:00Z') / 1000
+      },
+      { name: 'Blue Core', updatedAt: 2 }
     ]);
-    expect(withSourceUpdatedAt(list, 'LC Latest', null)).toBe(list);
+  });
+
+  it('adds nothing while the date is unknown', () => {
+    const list = [{ name: 'LC Latest', updatedAt: 1 }];
+    expect(withSourceInfo(list, LC_LATEST, null)).toBe(list);
   });
 
   it('takes the newest commit across the files', async () => {

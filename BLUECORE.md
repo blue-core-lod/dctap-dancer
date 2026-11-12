@@ -16,13 +16,14 @@ Search for `BLUECORE` to find everything we changed.
 All of it lives in two folders:
 
 - `backend/src/bluecore/`: login check, the starting "Blue Core" workspace, the "LC Latest" workspace, and tests (`test/`)
-- `frontend/src/bluecore/`: Keycloak login and the top bar ("LC Latest" status, "Signed in as…")
+- `frontend/src/bluecore/`: Keycloak login and the "Signed in as…" bar
 
 ## LC files we touched
 
 Just a few lines each, marked `BLUECORE`:
 
 - `backend/src/index.ts`, `frontend/src/main.ts`, `frontend/src/services/api.ts`: one-line hooks that switch on our code
+- `frontend/src/views/HomeView.vue`, `frontend/src/types/index.ts`: the "LC Latest" card's "last updated on" line
 - `backend/package.json`, `frontend/package.json`, `package-lock.json`: two added libraries (`jose`, `keycloak-js`)
 - `.github/workflows/test.yml`: also runs the tests on `bluecore-dev-mvp`
 
@@ -46,9 +47,9 @@ The starting workspace is only created if it doesn't exist yet. Edits are never 
 A read-only workspace that always matches LC's newest Marva profiles. It's
 always on, and its settings are in `backend/src/bluecore/sync.ts`.
 
-- Checked at startup and every hour; re-imported only when LC's files changed
-- Its "Modified" date on the home page is LC's last commit to the files, not the import time
-- The top bar shows when it last matched LC, or a yellow warning if LC's GitHub couldn't be reached (the current copy is kept, and the next check tries again)
+- Checked at startup and hourly; downloads LC's files only when GitHub shows a new commit, and re-imports only when they changed
+- Its home page card shows "Library of Congress Profiles last updated on: <date>" (LC's last commit to the files, linked to LC's profiles on GitHub) instead of Created/Modified
+- If LC's GitHub can't be reached, the current copy is kept and the next check tries again
 - Locked, so nobody's edits get wiped by the next update. Duplicate it to edit.
 
 ## Tests
