@@ -4,7 +4,7 @@
 # crashes with "Cannot read properties of null (reading 'edgesOut')").
 
 # Frontend build stage
-FROM node:22-alpine AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 
 # npm 10.9 (bundled with node:22) crashes resolving some trees; use npm 12
 RUN npm install -g npm@12
@@ -31,7 +31,7 @@ WORKDIR /app/frontend
 RUN npm run build
 
 # Backend build stage
-FROM node:22-alpine AS backend-builder
+FROM node:24-alpine AS backend-builder
 
 # npm 10.9 (bundled with node:22) crashes resolving some trees; use npm 12
 RUN npm install -g npm@12
@@ -55,7 +55,7 @@ WORKDIR /app/backend
 RUN npm run build
 
 # Production stage
-FROM node:22-alpine AS production
+FROM node:24-alpine AS production
 
 # npm 10.9 (bundled with node:22) crashes resolving some trees; use npm 12
 RUN npm install -g npm@12
