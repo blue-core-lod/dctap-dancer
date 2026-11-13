@@ -13,7 +13,7 @@ import marvaProfileRouter from './routes/marva-profile.js';
 import startingPointRouter from './routes/starting-point.js';
 import serveRouter from './routes/serve.js';
 import { workspaceService } from './services/database.js';
-import { addBluecoreAuth, addLcLatestRoutes, setupBluecoreWorkspaces } from './bluecore/index.js'; // BLUECORE
+import { addBluecoreAuth, addBluecoreRoutes, setupBluecoreWorkspaces } from './bluecore/index.js'; // BLUECORE
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,7 +22,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 addBluecoreAuth(app); // BLUECORE: require a Keycloak login on /api (see src/bluecore)
-addLcLatestRoutes(app); // BLUECORE: "LC Latest" card date (see src/bluecore)
+addBluecoreRoutes(app); // BLUECORE: version on /api/health, "LC Latest" card date (see src/bluecore)
 
 // API Routes
 app.use('/api/workspaces', workspacesRouter);

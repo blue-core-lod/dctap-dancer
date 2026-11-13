@@ -64,7 +64,11 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          docker build --build-arg VITE_BASE_PATH="$VITE_BASE_PATH" -t "$IMAGE:latest" .
+          # Shown on the Blue Core dashboard: the release tag (e.g. v0.1.03),
+          # or the branch and commit for a branch build
+          VERSION="${RELEASE_TAG:-$GITHUB_REF_NAME-$(git rev-parse --short HEAD)}"
+          docker build --build-arg VITE_BASE_PATH="$VITE_BASE_PATH" \
+            --build-arg DCTAP_DANCER_VERSION="$VERSION" -t "$IMAGE:latest" .
           docker push "$IMAGE:latest"
           if [ -n "$RELEASE_TAG" ]; then
             docker tag "$IMAGE:latest" "$IMAGE:$RELEASE_TAG"

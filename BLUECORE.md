@@ -15,7 +15,7 @@ Search for `BLUECORE` to find everything we changed.
 
 All of it lives in two folders:
 
-- `backend/src/bluecore/`: login check, the starting "Blue Core" workspace, the "LC Latest" workspace, and tests (`test/`)
+- `backend/src/bluecore/`: login check, the starting "Blue Core" workspace, the "LC Latest" workspace, the release version on `/api/health`, and tests (`test/`)
 - `frontend/src/bluecore/`: Keycloak login and the "Signed in as…" bar
 
 ## LC files we touched
@@ -24,6 +24,7 @@ Just a few lines each, marked `BLUECORE`:
 
 - `backend/src/index.ts`, `frontend/src/main.ts`, `frontend/src/services/api.ts`: one-line hooks that switch on our code
 - `frontend/src/views/HomeView.vue`, `frontend/src/types/index.ts`: the "LC Latest" card's "last updated on" line
+- `Dockerfile`: the `DCTAP_DANCER_VERSION` build arg (the release, which `/api/health` reports for the Blue Core dashboard)
 - `backend/package.json`, `frontend/package.json`, `package-lock.json`: two added libraries (`jose`, `keycloak-js`)
 - `.github/workflows/test.yml`: also runs the tests on `bluecore-dev-mvp`
 

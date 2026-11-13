@@ -3,6 +3,7 @@ import { Express } from 'express';
 import { loadAuthConfig, createAuthMiddleware, publicAuthConfig } from './auth.js';
 import { loadSeedConfig, seedWorkspace } from './seed.js';
 import { LC_LATEST, msUntilNextCheck, readSourceUpdatedAt, syncWorkspace, withSourceInfo } from './sync.js';
+import { dancerVersion, withVersion } from './version.js';
 import { workspaceService } from '../services/database.js';
 
 const authConfig = loadAuthConfig();
@@ -28,12 +29,23 @@ export function addBluecoreAuth(app: Express): void {
 }
 
 /**
- * Give "LC Latest" in the workspace list the date LC last changed the files,
- * for its card ("Library of Congress Profiles last updated on: …").
+ * Add Blue Core's extras to two of the editor's responses:
+ *   - /api/health gets the dancer's release version, which the Blue Core
+ *     dashboard shows ("DCTap Version: …"). See version.ts.
+ *   - "LC Latest" in the workspace list gets the date LC last changed the
+ *     files, for its card ("Library of Congress Profiles last updated on: …").
  *
  * Call before the API routes.
  */
-export function addLcLatestRoutes(app: Express): void {
+export function addBluecoreRoutes(app: Express): void {
+  const version = dancerVersion();
+  console.log(`DCTap Dancer version: ${version ?? 'unknown'}`);
+  app.get('/api/health', (_req, res, next) => {
+    const json = res.json.bind(res);
+    res.json = (body) => json(withVersion(body, version));
+    next();
+  });
+
   app.get('/api/workspaces', (_req, res, next) => {
     const json = res.json.bind(res);
     res.json = (body) => {

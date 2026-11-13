@@ -101,6 +101,11 @@ EXPOSE 3000
 ENV NODE_ENV=production
 ENV PORT=3000
 
+# BLUECORE: release shown on the Blue Core dashboard via /api/health
+# (bluecore-publish.yml passes the release tag; see backend/src/bluecore/version.ts)
+ARG DCTAP_DANCER_VERSION=unversioned
+ENV DCTAP_DANCER_VERSION=$DCTAP_DANCER_VERSION
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
