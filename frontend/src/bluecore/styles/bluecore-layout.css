@@ -1,0 +1,12 @@
+/* BLUECORE: fit upstream's views between the Blue Core header and footer (see ../header-footer.ts).
+   The <bluecore-header> / <bluecore-footer> elements set these height variables while shown. */
+
+/* upstream App.vue: #app { min-height: 100vh } */
+#app {
+  min-height: calc(100vh - var(--bluecore-header-height, 0px) - var(--bluecore-footer-height, 0px));
+}
+
+/* upstream WorkspaceView.vue (scoped): .workspace-view { height: 100vh } */
+.workspace-view {
+  height: calc(100vh - var(--bluecore-header-height, 0px) - var(--bluecore-footer-height, 0px)) !important;
+}

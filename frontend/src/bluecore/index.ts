@@ -1,17 +1,17 @@
 // BLUECORE: Blue Core plugin for the DCTap Dancer frontend.
 import type { AxiosError, AxiosInstance } from 'axios';
 import { initAuth, getToken, login } from './auth';
-import { mountUserBar } from './user-bar';
+import { mountBluecoreHeaderFooter } from './header-footer';
 
 /**
  * Hold the app until the user is logged in through Keycloak (redirecting to
- * the login page if needed), then add the "Signed in as …" bar. Resolves right
+ * the login page if needed), then add the Blue Core header and footer. Resolves right
  * away when the backend has auth turned off. On failure it shows a message in
  * place of the app and never resolves.
  */
 export function requireBluecoreLogin(): Promise<void> {
   return initAuth()
-    .then(mountUserBar)
+    .then(mountBluecoreHeaderFooter)
     .catch((error) => {
       console.error('Authentication failed:', error);
       const root = document.getElementById('app');
