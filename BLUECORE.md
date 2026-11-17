@@ -16,7 +16,7 @@ Search for `BLUECORE` to find everything we changed.
 All of it lives in two folders:
 
 - `backend/src/bluecore/`: login check, the starting "Blue Core" workspace, the "LC Latest" workspace, the release version on `/api/health`, and tests (`test/`)
-- `frontend/src/bluecore/`: Keycloak login and the "Signed in as…" bar
+- `frontend/src/bluecore/`: Keycloak login, and the Blue Core header and footer (the `<bluecore-header>` / `<bluecore-footer>` elements served by bluecore-stack at `/assets/bluecore/bluecore-header-footer.js`)
 
 ## LC files we touched
 

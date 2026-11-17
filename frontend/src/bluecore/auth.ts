@@ -19,6 +19,11 @@ const TOKEN_COOKIE = 'dancer_access_token';
 const MIN_VALIDITY_SECONDS = 60;
 const REFRESH_INTERVAL_MS = 30_000;
 
+// Where Keycloak sends the browser after logout: Blue Core's Marva login page (bluecore-stack
+// nginx/marva-login/), not back to the dancer, which would go straight to the Keycloak sign-in
+// form. Must be one of the client's "Valid post logout redirect URIs" in Keycloak.
+const LOGOUT_REDIRECT_PATH = '/marva-login/';
+
 let keycloak: Keycloak | null = null;
 
 async function fetchSettings(): Promise<AuthSettings> {
@@ -112,5 +117,5 @@ export function logout(): Promise<void> {
   const instance = keycloak;
   keycloak = null;
   syncTokenCookie(); // clears it
-  return instance.logout({ redirectUri: `${window.location.origin}${getBasePath()}` });
+  return instance.logout({ redirectUri: `${window.location.origin}${LOGOUT_REDIRECT_PATH}` });
 }
